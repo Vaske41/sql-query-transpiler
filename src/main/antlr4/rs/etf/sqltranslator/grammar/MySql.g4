@@ -8,23 +8,126 @@ script : statement (';' statement)* ';'? EOF ;
 
 statement : selectStatement ;
 
-selectStatement : SELECT INTEGER_LITERAL ;
+selectStatement : querySpecification ;
+
+querySpecification
+    : SELECT setQuantifier? selectItem (',' selectItem)*
+      (FROM tableSource)?
+      whereClause?
+    ;
+
+setQuantifier : DISTINCT | ALL ;
+
+selectItem
+    : '*'                                   # selectStar
+    | qualifiedName '.' '*'                 # selectQualifiedStar
+    | expression (AS? identifier)?          # selectExpr
+    ;
+
+tableSource : qualifiedName (AS? identifier)? ;
+
+whereClause : WHERE expression ;
+
+// ---------- Expressions (precedence ladder, lowest first) ----------
+
+expression : orExpression ;
+
+// MySQL || is logical OR (without PIPES_AS_CONCAT) — parse-side decision.
+orExpression : andExpression ((OR | PIPES) andExpression)* ;
+
+andExpression : notExpression (AND notExpression)* ;
+
+notExpression : NOT notExpression | predicate ;
+
+predicate
+    : concatExpression comparisonOperator concatExpression                 # comparisonPredicate
+    | concatExpression NOT? BETWEEN concatExpression AND concatExpression  # betweenPredicate
+    | concatExpression NOT? LIKE concatExpression                          # likePredicate
+    | concatExpression NOT? IN '(' expression (',' expression)* ')'        # inListPredicate
+    | concatExpression IS NOT? NULL                                        # isNullPredicate
+    | concatExpression                                                     # simplePredicate
+    ;
+
+comparisonOperator : '=' | '<>' | '!=' | '<' | '<=' | '>' | '>=' ;
+
+concatExpression : additiveExpression ;
+
+additiveExpression : multiplicativeExpression (('+' | '-') multiplicativeExpression)* ;
+
+multiplicativeExpression : unaryExpression (('*' | '/' | '%') unaryExpression)* ;
+
+unaryExpression : ('-' | '+') unaryExpression | primaryExpression ;
+
+primaryExpression
+    : literal                               # literalExpr
+    | caseExpression                        # caseExpr
+    | castExpression                        # castExpr
+    | functionCall                          # functionExpr
+    | qualifiedName                         # columnRefExpr
+    | '(' expression ')'                    # parenExpr
+    ;
+
+functionCall : functionName '(' (setQuantifier? expression (',' expression)* | '*')? ')' ;
+
+functionName : identifier | MAX ;
+
+caseExpression
+    : CASE expression? (WHEN expression THEN expression)+ (ELSE expression)? END
+    ;
+
+castExpression : CAST '(' expression AS dataType ')' ;
+
+dataType : identifier ('(' dataTypeArg (',' dataTypeArg)? ')')? ;
+
+qualifiedName : identifier ('.' identifier)* ;   // >3 parts refused in Phase 3 builder
+
+// MySQL: booleans are literals.
+literal
+    : INTEGER_LITERAL
+    | DECIMAL_LITERAL
+    | STRING_LITERAL
+    | NULL
+    | TRUE
+    | FALSE
+    ;
+
+identifier : ID | QUOTED_IDENTIFIER ;
 
 // =====================================================================
 // 2. Dialect-specific parser rules
 // =====================================================================
 
+dataTypeArg : INTEGER_LITERAL ;
+
 // =====================================================================
 // 3. Keywords (shared block — byte-identical in all three grammars)
 // =====================================================================
 
-SELECT : S E L E C T ;
+ALL:A L L; AND:A N D; AS:A S; BETWEEN:B E T W E E N; CASE:C A S E; CAST:C A S T;
+CONVERT:C O N V E R T; DISTINCT:D I S T I N C T; ELSE:E L S E; END:E N D;
+FALSE:F A L S E; FROM:F R O M; IN:I N; IS:I S; LIKE:L I K E; MAX:M A X;
+NOT:N O T; NULL:N U L L; OR:O R; SELECT:S E L E C T; THEN:T H E N; TRUE:T R U E;
+WHEN:W H E N; WHERE:W H E R E;
 
 // =====================================================================
-// 4. Literals and identifiers (dialect-specific lexing)
+// 4. Operators, literals, identifiers (dialect-specific lexing)
 // =====================================================================
+
+PIPES : '||' ;
 
 INTEGER_LITERAL : [0-9]+ ;
+
+DECIMAL_LITERAL : [0-9]+ '.' [0-9]* | '.' [0-9]+ ;
+
+// MySQL: '...' or "..." are STRINGS; backslash AND '' both escape. `backtick` identifiers.
+STRING_LITERAL
+    : '\'' ('\\' . | '\'\'' | ~['\\])* '\''
+    | '"'  ('\\' . | '""'   | ~["\\])* '"'
+    ;
+
+QUOTED_IDENTIFIER : '`' ('``' | ~'`')* '`' ;
+
+ID : [A-Za-z_][A-Za-z0-9_$]* ;
 
 // =====================================================================
 // 5. Trivia

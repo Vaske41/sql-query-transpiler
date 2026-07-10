@@ -1,0 +1,1 @@
+SELECT CAST(price AS INTEGER), CAST(name AS VARCHAR(50)) FROM products;

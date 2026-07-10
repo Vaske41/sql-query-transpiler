@@ -1,0 +1,1 @@
+SELECT CAST(price AS INT), CAST(name AS NVARCHAR(50)) FROM products;
