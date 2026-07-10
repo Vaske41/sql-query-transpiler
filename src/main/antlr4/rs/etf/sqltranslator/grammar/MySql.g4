@@ -93,14 +93,16 @@ tableSource : tablePrimary joinedTable* ;
 
 tablePrimary : qualifiedName (AS? identifier)? ;
 
-joinedTable : joinType tablePrimary (ON expression)? ;
+joinedTable
+    : joinType tablePrimary ON expression
+    | CROSS JOIN tablePrimary
+    ;
 
 // MySQL has no FULL [OUTER] JOIN.
 joinType
     : INNER? JOIN
     | LEFT OUTER? JOIN
     | RIGHT OUTER? JOIN
-    | CROSS JOIN
     ;
 
 whereClause : WHERE expression ;
@@ -245,7 +247,9 @@ ID : [A-Za-z_][A-Za-z0-9_$]* ;
 // 5. Trivia
 // =====================================================================
 
-LINE_COMMENT  : '--' ~[\r\n]* -> skip ;
+// MySQL requires whitespace (or EOL) after '--'; bare '1--2' is subtraction.
+LINE_COMMENT  : '--' ([ \t] ~[\r\n]* | [\r\n] | EOF) -> skip ;
+HASH_COMMENT  : '#' ~[\r\n]* -> skip ;
 BLOCK_COMMENT : '/*' .*? '*/' -> skip ;
 WS            : [ \t\r\n]+ -> skip ;
 

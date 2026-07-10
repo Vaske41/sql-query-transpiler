@@ -92,14 +92,16 @@ tableSource : tablePrimary joinedTable* ;
 
 tablePrimary : qualifiedName (AS? identifier)? ;
 
-joinedTable : joinType tablePrimary (ON expression)? ;
+joinedTable
+    : joinType tablePrimary ON expression
+    | CROSS JOIN tablePrimary
+    ;
 
 joinType
     : INNER? JOIN
     | LEFT OUTER? JOIN
     | RIGHT OUTER? JOIN
     | FULL OUTER? JOIN
-    | CROSS JOIN
     ;
 
 whereClause : WHERE expression ;
@@ -138,7 +140,7 @@ predicate
 
 comparisonOperator : '=' | '<>' | '!=' | '<' | '<=' | '>' | '>=' ;
 
-// PG: || is string concat, precedence above additive.
+// PG: || is string concat — binds looser than additive, tighter than comparison.
 concatExpression : additiveExpression (PIPES additiveExpression)* ;
 
 additiveExpression : multiplicativeExpression (('+' | '-') multiplicativeExpression)* ;
