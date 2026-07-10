@@ -6,7 +6,26 @@ grammar MySql;
 
 script : statement (';' statement)* ';'? EOF ;
 
-statement : selectStatement ;
+statement
+    : selectStatement
+    | insertStatement
+    | updateStatement
+    | deleteStatement
+    ;
+
+// MySQL: INTO is optional.
+insertStatement
+    : INSERT INTO? qualifiedName ('(' identifier (',' identifier)* ')')?
+      VALUES rowValue (',' rowValue)*
+    ;
+
+rowValue : '(' expression (',' expression)* ')' ;
+
+updateStatement : UPDATE qualifiedName SET assignment (',' assignment)* whereClause? ;
+
+assignment : identifier '=' expression ;
+
+deleteStatement : DELETE FROM qualifiedName whereClause? ;
 
 selectStatement : queryExpression ;
 
@@ -144,15 +163,17 @@ rowLimitClause
 
 ALL:A L L; AND:A N D; AS:A S; ASC:A S C; BETWEEN:B E T W E E N; BY:B Y;
 CASE:C A S E; CAST:C A S T; CONVERT:C O N V E R T; CROSS:C R O S S;
-DESC:D E S C; DISTINCT:D I S T I N C T; ELSE:E L S E; END:E N D;
-EXISTS:E X I S T S; FALSE:F A L S E; FETCH:F E T C H; FIRST:F I R S T;
-FROM:F R O M; FULL:F U L L; GROUP:G R O U P; HAVING:H A V I N G; IN:I N;
-INNER:I N N E R; IS:I S; JOIN:J O I N; LAST:L A S T; LEFT:L E F T;
+DELETE:D E L E T E; DESC:D E S C; DISTINCT:D I S T I N C T; ELSE:E L S E;
+END:E N D; EXISTS:E X I S T S; FALSE:F A L S E; FETCH:F E T C H;
+FIRST:F I R S T; FROM:F R O M; FULL:F U L L; GROUP:G R O U P;
+HAVING:H A V I N G; IN:I N; INNER:I N N E R; INSERT:I N S E R T;
+INTO:I N T O; IS:I S; JOIN:J O I N; LAST:L A S T; LEFT:L E F T;
 LIKE:L I K E; LIMIT:L I M I T; MAX:M A X; NEXT:N E X T; NOT:N O T;
 NULL:N U L L; NULLS:N U L L S; OFFSET:O F F S E T; ON:O N; ONLY:O N L Y;
 OR:O R; ORDER:O R D E R; OUTER:O U T E R; RIGHT:R I G H T; ROW:R O W;
-ROWS:R O W S; SELECT:S E L E C T; THEN:T H E N; TOP:T O P; TRUE:T R U E;
-UNION:U N I O N; WHEN:W H E N; WHERE:W H E R E;
+ROWS:R O W S; SELECT:S E L E C T; SET:S E T; THEN:T H E N; TOP:T O P;
+TRUE:T R U E; UNION:U N I O N; UPDATE:U P D A T E; VALUES:V A L U E S;
+WHEN:W H E N; WHERE:W H E R E;
 
 // =====================================================================
 // 4. Operators, literals, identifiers (dialect-specific lexing)
