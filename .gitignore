@@ -1,0 +1,14 @@
+# Private planning notes
+plans/
+
+# Maven
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
