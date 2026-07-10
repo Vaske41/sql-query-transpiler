@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS old_logs;
+ALTER TABLE users ADD nickname VARCHAR(50);
+ALTER TABLE users DROP COLUMN nickname;
