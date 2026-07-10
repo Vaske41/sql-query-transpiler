@@ -8,7 +8,9 @@ script : statement (';' statement)* ';'? EOF ;
 
 statement : selectStatement ;
 
-selectStatement : querySpecification ;
+selectStatement : queryExpression ;
+
+queryExpression : querySpecification (UNION ALL? querySpecification)* ;
 
 querySpecification
     : SELECT setQuantifier? selectItem (',' selectItem)*
@@ -24,9 +26,23 @@ selectItem
     | expression (AS? identifier)?          # selectExpr
     ;
 
-tableSource : qualifiedName (AS? identifier)? ;
+tableSource : tablePrimary joinedTable* ;
+
+tablePrimary : qualifiedName (AS? identifier)? ;
+
+joinedTable : joinType tablePrimary (ON expression)? ;
+
+joinType
+    : INNER? JOIN
+    | LEFT OUTER? JOIN
+    | RIGHT OUTER? JOIN
+    | FULL OUTER? JOIN
+    | CROSS JOIN
+    ;
 
 whereClause : WHERE expression ;
+
+subquery : '(' queryExpression ')' ;
 
 // ---------- Expressions (precedence ladder, lowest first) ----------
 
@@ -43,7 +59,9 @@ predicate
     | concatExpression NOT? BETWEEN concatExpression AND concatExpression  # betweenPredicate
     | concatExpression NOT? LIKE concatExpression                          # likePredicate
     | concatExpression NOT? IN '(' expression (',' expression)* ')'        # inListPredicate
+    | concatExpression NOT? IN subquery                                    # inSubqueryPredicate
     | concatExpression IS NOT? NULL                                        # isNullPredicate
+    | EXISTS subquery                                                      # existsPredicate
     | concatExpression                                                     # simplePredicate
     ;
 
@@ -64,6 +82,7 @@ primaryExpression
     | castExpression                        # castExpr
     | functionCall                          # functionExpr
     | qualifiedName                         # columnRefExpr
+    | subquery                              # scalarSubqueryExpr
     | '(' expression ')'                    # parenExpr
     ;
 
@@ -105,9 +124,11 @@ dataTypeArg : INTEGER_LITERAL ;
 // =====================================================================
 
 ALL:A L L; AND:A N D; AS:A S; BETWEEN:B E T W E E N; CASE:C A S E; CAST:C A S T;
-CONVERT:C O N V E R T; DISTINCT:D I S T I N C T; ELSE:E L S E; END:E N D;
-FALSE:F A L S E; FROM:F R O M; IN:I N; IS:I S; LIKE:L I K E; MAX:M A X;
-NOT:N O T; NULL:N U L L; OR:O R; SELECT:S E L E C T; THEN:T H E N; TRUE:T R U E;
+CONVERT:C O N V E R T; CROSS:C R O S S; DISTINCT:D I S T I N C T; ELSE:E L S E;
+END:E N D; EXISTS:E X I S T S; FALSE:F A L S E; FROM:F R O M; FULL:F U L L;
+IN:I N; INNER:I N N E R; IS:I S; JOIN:J O I N; LEFT:L E F T; LIKE:L I K E;
+MAX:M A X; NOT:N O T; NULL:N U L L; ON:O N; OR:O R; OUTER:O U T E R;
+RIGHT:R I G H T; SELECT:S E L E C T; THEN:T H E N; TRUE:T R U E; UNION:U N I O N;
 WHEN:W H E N; WHERE:W H E R E;
 
 // =====================================================================
