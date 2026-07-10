@@ -1,0 +1,3 @@
+# Golden-file byte-equality tests (Phase 7) must never be poisoned by CRLF churn.
+*.sql text eol=lf
+*.g4 text eol=lf

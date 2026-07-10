@@ -49,6 +49,7 @@
         <configuration>
           <visitor>true</visitor>
           <listener>false</listener>
+          <treatWarningsAsErrors>true</treatWarningsAsErrors>
         </configuration>
         <executions>
           <execution>
