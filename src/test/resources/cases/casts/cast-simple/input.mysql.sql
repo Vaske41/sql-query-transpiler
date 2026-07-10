@@ -1,0 +1,1 @@
+SELECT CAST(price AS DECIMAL(10,2)), CAST(name AS CHAR(50)) FROM products;
