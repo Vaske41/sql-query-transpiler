@@ -1,0 +1,1 @@
+SELECT id FROM users ORDER BY last_login DESC NULLS LAST, name ASC NULLS FIRST;

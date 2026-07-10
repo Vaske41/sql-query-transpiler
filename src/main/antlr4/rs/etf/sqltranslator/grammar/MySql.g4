@@ -10,12 +10,18 @@ statement : selectStatement ;
 
 selectStatement : queryExpression ;
 
-queryExpression : querySpecification (UNION ALL? querySpecification)* ;
+queryExpression
+    : querySpecification (UNION ALL? querySpecification)*
+      orderByClause?
+      rowLimitClause?
+    ;
 
 querySpecification
     : SELECT setQuantifier? selectItem (',' selectItem)*
       (FROM tableSource)?
       whereClause?
+      groupByClause?
+      havingClause?
     ;
 
 setQuantifier : DISTINCT | ALL ;
@@ -41,6 +47,14 @@ joinType
     ;
 
 whereClause : WHERE expression ;
+
+groupByClause : GROUP BY expression (',' expression)* ;
+
+havingClause : HAVING expression ;
+
+orderByClause : ORDER BY orderItem (',' orderItem)* ;
+
+orderItem : expression (ASC | DESC)? ;
 
 subquery : '(' queryExpression ')' ;
 
@@ -118,17 +132,27 @@ identifier : ID | QUOTED_IDENTIFIER ;
 
 dataTypeArg : INTEGER_LITERAL ;
 
+// MySQL: LIMIT n | LIMIT n OFFSET m | LIMIT m, n.
+rowLimitClause
+    : LIMIT expression (OFFSET expression)?
+    | LIMIT expression ',' expression
+    ;
+
 // =====================================================================
 // 3. Keywords (shared block — byte-identical in all three grammars)
 // =====================================================================
 
-ALL:A L L; AND:A N D; AS:A S; BETWEEN:B E T W E E N; CASE:C A S E; CAST:C A S T;
-CONVERT:C O N V E R T; CROSS:C R O S S; DISTINCT:D I S T I N C T; ELSE:E L S E;
-END:E N D; EXISTS:E X I S T S; FALSE:F A L S E; FROM:F R O M; FULL:F U L L;
-IN:I N; INNER:I N N E R; IS:I S; JOIN:J O I N; LEFT:L E F T; LIKE:L I K E;
-MAX:M A X; NOT:N O T; NULL:N U L L; ON:O N; OR:O R; OUTER:O U T E R;
-RIGHT:R I G H T; SELECT:S E L E C T; THEN:T H E N; TRUE:T R U E; UNION:U N I O N;
-WHEN:W H E N; WHERE:W H E R E;
+ALL:A L L; AND:A N D; AS:A S; ASC:A S C; BETWEEN:B E T W E E N; BY:B Y;
+CASE:C A S E; CAST:C A S T; CONVERT:C O N V E R T; CROSS:C R O S S;
+DESC:D E S C; DISTINCT:D I S T I N C T; ELSE:E L S E; END:E N D;
+EXISTS:E X I S T S; FALSE:F A L S E; FETCH:F E T C H; FIRST:F I R S T;
+FROM:F R O M; FULL:F U L L; GROUP:G R O U P; HAVING:H A V I N G; IN:I N;
+INNER:I N N E R; IS:I S; JOIN:J O I N; LAST:L A S T; LEFT:L E F T;
+LIKE:L I K E; LIMIT:L I M I T; MAX:M A X; NEXT:N E X T; NOT:N O T;
+NULL:N U L L; NULLS:N U L L S; OFFSET:O F F S E T; ON:O N; ONLY:O N L Y;
+OR:O R; ORDER:O R D E R; OUTER:O U T E R; RIGHT:R I G H T; ROW:R O W;
+ROWS:R O W S; SELECT:S E L E C T; THEN:T H E N; TOP:T O P; TRUE:T R U E;
+UNION:U N I O N; WHEN:W H E N; WHERE:W H E R E;
 
 // =====================================================================
 // 4. Operators, literals, identifiers (dialect-specific lexing)
