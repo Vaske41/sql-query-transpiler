@@ -25,7 +25,8 @@ public final class RuleEngine {
                 new ValidateTargetCapabilitiesRule(),
                 new NormalizeSourceFunctionsRule(),
                 new ResolveConcatRule(),
-                new InsertCastsRule()));
+                new InsertCastsRule(),
+                new RewriteBooleanSemanticsRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
