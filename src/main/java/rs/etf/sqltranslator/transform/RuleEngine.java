@@ -22,7 +22,8 @@ public final class RuleEngine {
     /** The standard sequence. Grows task by task; order is load-bearing. */
     public static RuleEngine standard() {
         return new RuleEngine(List.of(
-                new ValidateTargetCapabilitiesRule()));
+                new ValidateTargetCapabilitiesRule(),
+                new NormalizeSourceFunctionsRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
