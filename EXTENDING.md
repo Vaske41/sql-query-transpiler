@@ -59,8 +59,13 @@ forces implementations in:
 - **`AstDumper`** — header line + labeled children; scalar components go in the
   header (`key=value`), composite ones as indented `label:` blocks. Keep it
   **position-free**: the cross-dialect equality test depends on that.
+- **`AbstractAstVisitor`** — walk/scan base with no-op defaults. Analysis that
+  *observes* the tree (e.g. `CatalogBuilder`) subclasses this and overrides only
+  the nodes it cares about — no identity rebuild.
 - **`AstTransformer`** — the identity rebuild: reconstruct the node from
-  recursively-`rebuild(...)`-ed children. Phase 4 rules inherit this traversal.
+  recursively-`rebuild(...)`-ed children. Phase 4 rules inherit this traversal
+  for pure AST→AST rewrites. Do **not** subclass `AstTransformer` for side-effecting
+  walks.
 - Any Phase 4/5 visitors that must consciously choose a behavior.
 
 ## 4. Builder mapping ×3 + shared support (`parser/`)
@@ -83,7 +88,8 @@ Override `visitCreateIndexStatement` in `TSqlAstBuilder`, `MySqlAstBuilder`,
 
 Most statements need **data, not code**: rows in the type/function registries.
 Only add a rule class when the statement needs a structural rewrite; subclass
-`AstTransformer` and override exactly the node types the rule matches.
+`AstTransformer` (not `AbstractAstVisitor`) and override exactly the node types
+the rule matches.
 
 ## 6. Printer method ×3 (Phase 5, `codegen/`)
 

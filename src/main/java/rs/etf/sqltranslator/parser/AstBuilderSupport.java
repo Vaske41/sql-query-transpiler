@@ -18,9 +18,11 @@ import rs.etf.sqltranslator.ast.Identifier;
 import rs.etf.sqltranslator.ast.MaxLength;
 import rs.etf.sqltranslator.ast.NumericLiteral;
 import rs.etf.sqltranslator.ast.QualifiedName;
+import rs.etf.sqltranslator.ast.QuerySpecification;
 import rs.etf.sqltranslator.ast.RowLimit;
 import rs.etf.sqltranslator.ast.StringLiteral;
 import rs.etf.sqltranslator.ast.TypeLength;
+import rs.etf.sqltranslator.ast.UnionArm;
 import rs.etf.sqltranslator.ast.WhenClause;
 import rs.etf.sqltranslator.core.Dialect;
 import rs.etf.sqltranslator.core.SourcePosition;
@@ -67,13 +69,17 @@ final class AstBuilderSupport {
         return new SourcePosition(token.getLine(), token.getCharPositionInLine());
     }
 
-    void refuse(String construct, SourcePosition position) {
+    /**
+     * Always throws. Returns {@link UnsupportedFeatureException} so call sites can
+     * write {@code throw support.refuse(...)} and remain obviously terminating.
+     */
+    UnsupportedFeatureException refuse(String construct, SourcePosition position) {
         throw new UnsupportedFeatureException(construct, position);
     }
 
     void refuseIf(boolean condition, String construct, SourcePosition position) {
         if (condition) {
-            refuse(construct, position);
+            throw refuse(construct, position);
         }
     }
 
@@ -222,6 +228,33 @@ final class AstBuilderSupport {
         return result;
     }
 
+    /**
+     * Walks a {@code queryExpression} child list and builds {@link UnionArm}s after
+     * each {@code UNION [ALL]}. Token type ids differ per dialect grammar; the
+     * structural walk is shared.
+     */
+    List<UnionArm> unionArms(ParserRuleContext ctx, int unionTokenType, int allTokenType,
+                             ParseTreeVisitor<Object> builder) {
+        List<UnionArm> arms = new ArrayList<>();
+        boolean afterUnion = false;
+        boolean all = false;
+        for (ParseTree child : ctx.children) {
+            if (child instanceof TerminalNode terminal) {
+                if (terminal.getSymbol().getType() == unionTokenType) {
+                    afterUnion = true;
+                    all = false;
+                } else if (afterUnion && terminal.getSymbol().getType() == allTokenType) {
+                    all = true;
+                }
+            } else if (afterUnion && child instanceof ParserRuleContext spec) {
+                arms.add(new UnionArm(all, (QuerySpecification) spec.accept(builder),
+                        pos(spec)));
+                afterUnion = false;
+            }
+        }
+        return arms;
+    }
+
     private BinaryOperator binaryOperator(String text) {
         return switch (text.toUpperCase(Locale.ROOT)) {
             case "OR" -> BinaryOperator.OR;
@@ -280,8 +313,8 @@ final class AstBuilderSupport {
     /**
      * T-SQL: {@code TOP n} or {@code ORDER BY ... OFFSET m ROWS [FETCH ... n ...]}.
      * Their combination is refused — SQL Server itself rejects it, and merging
-     * would invent semantics. ({@code TOP} inside UNION is refused by the builder
-     * before spec extraction, where the arm is still identifiable.)
+     * would invent semantics. {@code TOP} inside UNION is refused here when
+     * {@code hasUnionArms} is true.
      */
     Optional<RowLimit> tsqlRowLimit(Expression top, SourcePosition topPosition,
                                     Expression offset, Expression fetch,
@@ -295,6 +328,26 @@ final class AstBuilderSupport {
                     offsetPosition));
         }
         return Optional.empty();
+    }
+
+    /**
+     * Picks the TOP clause from query specs, refusing TOP when the query has UNION
+     * arms. Returns {@code null} count/pos when no TOP is present.
+     */
+    ExtractedTop extractTsqlTop(List<ExtractedTop> tops, boolean hasUnionArms) {
+        ExtractedTop found = null;
+        for (ExtractedTop top : tops) {
+            if (top == null) {
+                continue;
+            }
+            refuseIf(hasUnionArms, "TOP inside UNION", top.position());
+            found = top;
+        }
+        return found;
+    }
+
+    /** One T-SQL {@code TOP} clause extracted by the dialect builder. */
+    record ExtractedTop(Expression count, SourcePosition position) {
     }
 
     /** MySQL: {@code LIMIT n [OFFSET m]} or {@code LIMIT m, n} (operand swap). */
@@ -337,6 +390,27 @@ final class AstBuilderSupport {
                 attributes.nullable, Optional.ofNullable(attributes.defaultValue),
                 attributes.primaryKey, attributes.unique,
                 Optional.ofNullable(attributes.references), position);
+    }
+
+    /**
+     * Applies one extracted column-constraint kind. Builders classify the ANTLR
+     * alternative; the attribute mutation lives once here.
+     */
+    void applyColumnConstraint(ColumnAttributes attributes, ColumnConstraintKind kind,
+                               Expression defaultValue, ForeignKeyRef references) {
+        switch (kind) {
+            case NOT_NULL -> attributes.notNull();
+            case NULL_ALLOWED -> attributes.nullAllowed();
+            case DEFAULT -> attributes.defaultValue(defaultValue);
+            case PRIMARY_KEY -> attributes.primaryKey();
+            case UNIQUE -> attributes.unique();
+            case REFERENCES -> attributes.references(references);
+            case AUTO_INCREMENT -> attributes.autoIncrement();
+        }
+    }
+
+    enum ColumnConstraintKind {
+        NOT_NULL, NULL_ALLOWED, DEFAULT, PRIMARY_KEY, UNIQUE, REFERENCES, AUTO_INCREMENT
     }
 
     /** Mutable accumulator the builders fill while walking {@code columnConstraint*}. */
@@ -417,9 +491,18 @@ final class AstBuilderSupport {
         }
         Fold entry = typeTable.get(name);
         if (entry == null) {
-            refuse("type " + name, position);
+            throw refuse("type " + name, position);
         }
         GenericType generic = entry.type();
+        // MySQL boolean idiom: TINYINT(1) → BOOLEAN (ROADMAP Phase 4 flagship).
+        if (dialect == Dialect.MYSQL
+                && generic == GenericType.TINYINT
+                && args.size() == 1
+                && args.get(0).equals("1")) {
+            return new FoldedType(
+                    new DataType(GenericType.BOOLEAN, Optional.empty(), Optional.empty()),
+                    entry.autoIncrement());
+        }
         Optional<TypeLength> length = Optional.empty();
         Optional<Integer> scale = Optional.empty();
         if (!args.isEmpty()) {
@@ -431,16 +514,24 @@ final class AstBuilderSupport {
                         "MAX length on type " + name, position);
                 length = Optional.of(new MaxLength());
             } else {
-                length = Optional.of(new FixedLength(Integer.parseInt(first)));
+                length = Optional.of(new FixedLength(parseTypeArg(first, name, position)));
             }
             if (args.size() > 1) {
                 String second = args.get(1);
                 refuseIf(generic != GenericType.DECIMAL || second.equalsIgnoreCase("MAX"),
                         "scale argument on type " + name, position);
-                scale = Optional.of(Integer.parseInt(second));
+                scale = Optional.of(parseTypeArg(second, name, position));
             }
         }
         return new FoldedType(new DataType(generic, length, scale), entry.autoIncrement());
+    }
+
+    private int parseTypeArg(String text, String typeName, SourcePosition position) {
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException e) {
+            throw refuse("length argument on type " + typeName, position);
+        }
     }
 
     private record Fold(GenericType type, boolean autoIncrement) {

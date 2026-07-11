@@ -92,7 +92,7 @@ final class MySqlAstBuilder extends MySqlBaseVisitor<Object> {
     @Override
     public Object visitQueryExpression(MySqlParser.QueryExpressionContext ctx) {
         QuerySpecification first = (QuerySpecification) visit(ctx.querySpecification(0));
-        List<UnionArm> arms = unionArms(ctx);
+        List<UnionArm> arms = support.unionArms(ctx, MySqlParser.UNION, MySqlParser.ALL, this);
         List<OrderItem> orderBy = ctx.orderByClause() == null
                 ? List.of()
                 : ctx.orderByClause().orderItem().stream()
@@ -109,27 +109,6 @@ final class MySqlAstBuilder extends MySqlBaseVisitor<Object> {
         Expression second = ctx.expression().size() > 1 ? expr(ctx.expression(1)) : null;
         boolean commaForm = second != null && ctx.OFFSET() == null;
         return Optional.of(support.mysqlRowLimit(first, second, commaForm, pos(ctx)));
-    }
-
-    private List<UnionArm> unionArms(MySqlParser.QueryExpressionContext ctx) {
-        List<UnionArm> arms = new ArrayList<>();
-        boolean afterUnion = false;
-        boolean all = false;
-        for (ParseTree child : ctx.children) {
-            if (child instanceof TerminalNode terminal) {
-                if (terminal.getSymbol().getType() == MySqlParser.UNION) {
-                    afterUnion = true;
-                    all = false;
-                } else if (afterUnion && terminal.getSymbol().getType() == MySqlParser.ALL) {
-                    all = true;
-                }
-            } else if (afterUnion
-                    && child instanceof MySqlParser.QuerySpecificationContext spec) {
-                arms.add(new UnionArm(all, (QuerySpecification) visit(spec), pos(spec)));
-                afterUnion = false;
-            }
-        }
-        return arms;
     }
 
     @Override
@@ -269,22 +248,31 @@ final class MySqlAstBuilder extends MySqlBaseVisitor<Object> {
         AstBuilderSupport.ColumnAttributes attributes = new AstBuilderSupport.ColumnAttributes();
         for (MySqlParser.ColumnConstraintContext constraint : ctx.columnConstraint()) {
             if (constraint.NOT() != null) {
-                attributes.notNull();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.NOT_NULL, null, null);
             } else if (constraint.DEFAULT() != null) {
-                attributes.defaultValue(expr(constraint.expression()));
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.DEFAULT,
+                        expr(constraint.expression()), null);
             } else if (constraint.NULL() != null) {
-                attributes.nullAllowed();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.NULL_ALLOWED, null, null);
             } else if (constraint.PRIMARY() != null) {
-                attributes.primaryKey();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.PRIMARY_KEY, null, null);
             } else if (constraint.UNIQUE() != null) {
-                attributes.unique();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.UNIQUE, null, null);
             } else if (constraint.REFERENCES() != null) {
                 Optional<Identifier> column = constraint.identifier() == null
                         ? Optional.empty() : Optional.of(ident(constraint.identifier()));
-                attributes.references(new ForeignKeyRef(qname(constraint.qualifiedName()),
-                        column, pos(constraint)));
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.REFERENCES, null,
+                        new ForeignKeyRef(qname(constraint.qualifiedName()), column,
+                                pos(constraint)));
             } else if (constraint.autoIncrement() != null) {
-                attributes.autoIncrement();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.AUTO_INCREMENT, null, null);
             }
         }
         return support.columnDefinition(ident(ctx.identifier()), type, attributes, pos(ctx));
@@ -434,7 +422,7 @@ final class MySqlAstBuilder extends MySqlBaseVisitor<Object> {
             return support.numeric(ctx.DECIMAL_LITERAL().getSymbol(), true);
         }
         if (ctx.HEX_LITERAL() != null) {
-            support.refuse("hex literal " + ctx.HEX_LITERAL().getText(), pos(ctx));
+            throw support.refuse("hex literal " + ctx.HEX_LITERAL().getText(), pos(ctx));
         }
         if (ctx.STRING_LITERAL() != null) {
             return support.stringLiteral(ctx.STRING_LITERAL().getSymbol());
