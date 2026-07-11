@@ -17,11 +17,20 @@ final class TransformTestSupport {
     }
 
     static TranslationResult runRule(Rule rule, String sql, Dialect source, Dialect target) {
+        return runRules(List.of(rule), sql, source, target);
+    }
+
+    static TranslationResult runRules(List<Rule> rules, String sql, Dialect source,
+                                      Dialect target) {
         Script script = AstBuilderFacade.buildScript(sql, source);
         TranslationReport report = new TranslationReport();
         TranslationContext ctx = new TranslationContext(source, target,
                 CatalogBuilder.build(script), report);
-        return new TranslationResult(rule.apply(script, ctx), report);
+        Script current = script;
+        for (Rule rule : rules) {
+            current = rule.apply(current, ctx);
+        }
+        return new TranslationResult(current, report);
     }
 
     /** Expression of the itemIndex-th select item of the stmtIndex-th statement. */

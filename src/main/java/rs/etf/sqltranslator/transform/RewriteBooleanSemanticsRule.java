@@ -13,6 +13,7 @@ import rs.etf.sqltranslator.ast.GenericType;
 import rs.etf.sqltranslator.ast.Identifier;
 import rs.etf.sqltranslator.ast.InsertStatement;
 import rs.etf.sqltranslator.ast.Join;
+import rs.etf.sqltranslator.ast.NullLiteral;
 import rs.etf.sqltranslator.ast.NumericLiteral;
 import rs.etf.sqltranslator.ast.QualifiedName;
 import rs.etf.sqltranslator.ast.QuerySpecification;
@@ -253,6 +254,15 @@ public final class RewriteBooleanSemanticsRule implements Rule {
             }
             if (expr instanceof BooleanLiteral b) {
                 return b.pos();
+            }
+            if (expr instanceof BinaryOp op) {
+                return op.pos();
+            }
+            if (expr instanceof UnaryOp op) {
+                return op.pos();
+            }
+            if (expr instanceof NullLiteral nullLit) {
+                return nullLit.pos();
             }
             if (expr instanceof rs.etf.sqltranslator.ast.FunctionCall call) {
                 return call.pos();

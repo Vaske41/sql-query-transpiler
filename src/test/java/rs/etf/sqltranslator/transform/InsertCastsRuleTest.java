@@ -87,4 +87,18 @@ class InsertCastsRuleTest {
         assertThat(in.items().get(0)).isInstanceOf(CastExpression.class);
         assertThat(in.items().get(1)).isNotInstanceOf(CastExpression.class);
     }
+
+    @Test
+    void zeroOrOneAgainstBooleanColumnSkipsCastForPostgres() {
+        String ddl = "CREATE TABLE flags (active BOOLEAN);";
+        TranslationResult r = runRule(rule,
+                ddl + "SELECT qty FROM flags WHERE active = 1;"
+                        + "SELECT qty FROM flags WHERE active = 0;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        BinaryOp eqOne = (BinaryOp) whereOf(r.script(), 1);
+        assertThat(eqOne.right()).isNotInstanceOf(CastExpression.class);
+        BinaryOp eqZero = (BinaryOp) whereOf(r.script(), 2);
+        assertThat(eqZero.right()).isNotInstanceOf(CastExpression.class);
+        assertThat(r.report().warnings()).isEmpty();
+    }
 }

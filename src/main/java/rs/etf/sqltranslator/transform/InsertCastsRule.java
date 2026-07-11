@@ -114,6 +114,10 @@ public final class InsertCastsRule implements Rule {
             if (literalFamily == columnFamily) {
                 return literal;
             }
+            if (columnFamily == TypeFamily.BOOLEAN && literal instanceof NumericLiteral n
+                    && (n.text().equals("0") || n.text().equals("1"))) {
+                return literal;                       // leave for RewriteBooleanSemanticsRule
+            }
             if (ctx.target() == Dialect.TSQL) {
                 ctx.report().warn("IMPLICIT_CONVERSION",
                         "comparison of " + literalFamily + " literal with " + columnFamily

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import rs.etf.sqltranslator.ast.BinaryOp;
 import rs.etf.sqltranslator.ast.BinaryOperator;
 import rs.etf.sqltranslator.ast.BooleanLiteral;
+import rs.etf.sqltranslator.ast.CastExpression;
 import rs.etf.sqltranslator.ast.ColumnRef;
 import rs.etf.sqltranslator.ast.CreateTableStatement;
 import rs.etf.sqltranslator.ast.Expression;
@@ -15,8 +16,11 @@ import rs.etf.sqltranslator.ast.UnaryOp;
 import rs.etf.sqltranslator.ast.UpdateStatement;
 import rs.etf.sqltranslator.core.Dialect;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static rs.etf.sqltranslator.transform.TransformTestSupport.runRule;
+import static rs.etf.sqltranslator.transform.TransformTestSupport.runRules;
 import static rs.etf.sqltranslator.transform.TransformTestSupport.selectExpr;
 
 class RewriteBooleanSemanticsRuleTest {
@@ -120,5 +124,26 @@ class RewriteBooleanSemanticsRuleTest {
         CreateTableStatement create = (CreateTableStatement) r.script().statements().get(0);
         assertThat(create.columns().get(0).defaultValue().orElseThrow())
                 .isInstanceOf(BooleanLiteral.class);
+    }
+
+    @Test
+    void bareUnaryExpressionGetsTruthinessWrapForPostgres() {
+        TranslationResult r = runRule(rule, DDL + "SELECT qty FROM flags WHERE -qty;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        BinaryOp where = (BinaryOp) whereOf(r.script(), 1);
+        assertThat(where.op()).isEqualTo(BinaryOperator.NEQ);
+        assertThat(where.left()).isInstanceOf(UnaryOp.class);
+        assertThat(((NumericLiteral) where.right()).text()).isEqualTo("0");
+    }
+
+    @Test
+    void insertCastsThenBooleanSemanticsSimplifiesActiveEqualsOneForPostgres() {
+        TranslationResult r = runRules(
+                List.of(new InsertCastsRule(), new RewriteBooleanSemanticsRule()),
+                DDL + "SELECT qty FROM flags WHERE active = 1;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        Expression where = whereOf(r.script(), 1);
+        assertThat(where).isInstanceOf(ColumnRef.class);
+        assertThat(where).isNotInstanceOf(CastExpression.class);
     }
 }
