@@ -1,5 +1,5 @@
-# Private planning notes (docs/superpowers/ specs are tracked)
-plans/
+# Private planning notes (docs/superpowers/ specs and plans are tracked)
+/plans/
 docs/*
 !docs/superpowers/
 
