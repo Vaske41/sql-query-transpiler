@@ -27,7 +27,8 @@ public final class RuleEngine {
                 new ResolveConcatRule(),
                 new InsertCastsRule(),
                 new RewriteBooleanSemanticsRule(),
-                new NarrowTypesRule()));
+                new NarrowTypesRule(),
+                new RenderTargetFunctionsRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
