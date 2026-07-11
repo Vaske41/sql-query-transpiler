@@ -164,7 +164,8 @@ primaryExpression
 
 functionCall : functionName '(' (setQuantifier? expression (',' expression)* | '*')? ')' ;
 
-functionName : identifier | MAX ;
+// A join's LEFT/RIGHT is never followed by '(' — unambiguous as function names.
+functionName : identifier | MAX | LEFT | RIGHT ;
 
 caseExpression
     : CASE expression? (WHEN expression THEN expression)+ (ELSE expression)? END
@@ -172,13 +173,15 @@ caseExpression
 
 castExpression : CAST '(' expression AS dataType ')' ;
 
-dataType : identifier ('(' dataTypeArg (',' dataTypeArg)? ')')? ;
+// Two-word form exists only for DOUBLE PRECISION — the builder whitelists it.
+dataType : identifier identifier? ('(' dataTypeArg (',' dataTypeArg)? ')')? ;
 
 qualifiedName : identifier ('.' identifier)* ;   // >3 parts refused in Phase 3 builder
 
 literal
     : INTEGER_LITERAL
     | DECIMAL_LITERAL
+    | HEX_LITERAL
     | STRING_LITERAL
     | NULL
     ;
@@ -231,7 +234,16 @@ PIPES : '||' ;
 
 INTEGER_LITERAL : [0-9]+ ;
 
-DECIMAL_LITERAL : [0-9]+ '.' [0-9]* | '.' [0-9]+ ;
+// Exponent alternative keeps SELECT 1e5 a literal — without it the alias rule
+// silently turns it into SELECT 1 AS e5 (wrong query, not an error).
+DECIMAL_LITERAL
+    : [0-9]+ '.' [0-9]*
+    | '.' [0-9]+
+    | ([0-9]+ ('.' [0-9]*)? | '.' [0-9]+) [eE] [+-]? [0-9]+
+    ;
+
+// Parses in all three grammars; uniformly refused by the Phase 3 builders.
+HEX_LITERAL : '0' X [0-9A-Fa-f]+ ;
 
 // T-SQL: 'x', N'x'; '' doubles a quote. [bracketed] or "quoted" identifiers.
 STRING_LITERAL : N? '\'' ('\'\'' | ~['])* '\'' ;
