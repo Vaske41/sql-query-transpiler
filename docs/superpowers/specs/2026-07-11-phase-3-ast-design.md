@@ -1,7 +1,7 @@
 # Phase 3 — AST Construction: Design
 
 **Date:** 2026-07-11
-**Status:** Approved (pending user review of this document)
+**Status:** Approved — amended 2026-07-11 after external design review (D10–D11, §3 fix 3, §4, §5)
 **Depends on:** Phase 2 (`phase-2-grammar-parsing` branch — three dialect grammars, `ParserFacade`, corpus harness)
 **Roadmap reference:** ROADMAP.md, Phase 3 (Days 4–6)
 
@@ -24,13 +24,19 @@ Review findings this design resolves:
 3. Two grammar gaps: keyword-named functions (`LEFT`/`RIGHT`) don't parse, and
    `dataType` is single-identifier only (`DOUBLE PRECISION` fails).
 4. PG `SERIAL` parses as an ordinary type name; folding it is the builder's job.
+5. Design review (2026-07-11): exponent/hex literals mis-lex and fall into the
+   select-item alias rule (`SELECT 1e5` silently becomes `SELECT 1 AS e5`);
+   T-SQL accepts `TOP` alongside `OFFSET/FETCH`, which SQL Server rejects;
+   Phase 4's rule engine needs a default-traversal transformer shipped with the
+   frozen node set; the catalog needs declaration-ordered columns for
+   positional `INSERT` resolution.
 
 ## Decisions (with rationale)
 
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | **Classic Visitor** — `AstVisitor<R>` + `accept()` on every node; no switch-based dispatch anywhere | The thesis text cites the GoF pattern; one style used everywhere per roadmap |
-| D2 | **Fix both grammar gaps now** — `LEFT`/`RIGHT` as function names; two-word `dataType` | Phase 4's function/type tables stay unconstrained; last cheap moment to touch grammars |
+| D2 | **Fix the grammar gaps now** — `LEFT`/`RIGHT` as function names; two-word `dataType`; exponent/hex literal lexing | Everything in Phase 4's planned function/type tables parses (`MAX`/`LEFT`/`RIGHT` are its only keyword collisions; other keyword-named functions would need the same one-line tweak later — grammars are not frozen); last cheap moment to touch grammars |
 | D3 | **Type folding in the builders** — per-dialect name → `GenericType` lookup; unknown types refused at build time | AST is born fully dialect-agnostic (strongest form of the thesis claim); no raw type strings survive |
 | D4 | **Thin visitors + shared core** — three generated-visitor subclasses doing mechanical extraction only; all logic in one `AstBuilderSupport` | Type-safe, standard ANTLR; every normalization/bug-fix lands once |
 | D5 | Numeric literals keep lexical text | `9.99` must reach output byte-identically (determinism guarantee) |
@@ -38,12 +44,16 @@ Review findings this design resolves:
 | D7 | One reusable `Query` node shared by statements and subqueries | Grammar subqueries contain full `queryExpression` (ORDER BY/LIMIT included) |
 | D8 | `UnsupportedFeatureException` moves to Phase 3 (`core/`) | Builders refuse constructs; the exception cannot wait for Phase 4 |
 | D9 | Node set **freezes** at end of Phase 3 | Roadmap risk-register mitigation; later needs become rules, not nodes |
+| D10 | **`AstTransformer` ships in Phase 3** — identity-rebuild `AstVisitor<Object>` base, part of the frozen API | Phase 4 rules override only the nodes they match; without it every rule reimplements ~40-method traversal or drifts into switch dispatch, violating D1 |
+| D11 | **Normalization lives in the builders** — deliberately supersedes the roadmap's "keep builders dumb, normalize in Phase 4" split | The roadmap's motive (isolated testability) survives via `AstBuilderSupport`; D3 requires the AST born dialect-agnostic; Phase 4 keeps every semantic rewrite |
 
 ## 1. AST node hierarchy (~40 records, `ast/` package)
 
 All nodes are Java 17 records implementing sealed interfaces. Every record carries
 `SourcePosition(int line, int column)` as its **last** component — 1-based line,
 0-based column, same convention as `SyntaxError`; populated from `ctx.getStart()`.
+`SourcePosition` lives in `core/` beside `SyntaxError`, not in `ast/`, so that
+`UnsupportedFeatureException` (§4) keeps `core/` free of any `ast/` dependency.
 Exception: the pure type descriptors `DataType`, `TypeLength`, `FixedLength`,
 `MaxLength` carry no position — they are also reused inside the `Catalog`, where
 positions are meaningless; errors about types are reported at the owning
@@ -168,8 +178,9 @@ record SubqueryExpression(Query query, SourcePosition pos)
 ```java
 sealed interface Literal extends Expression permits NumericLiteral, StringLiteral,
                                                     BooleanLiteral, NullLiteral
-record NumericLiteral(String text, boolean decimal, SourcePosition pos) // D5: lexical text;
-                                                       // decimal = had a fraction part
+record NumericLiteral(String text, boolean decimal, SourcePosition pos)
+    // D5: lexical text, exponent forms included (1e5, 2.5E-3); decimal mirrors
+    // the INTEGER_LITERAL vs DECIMAL_LITERAL token distinction
 record StringLiteral(String value /*unescaped*/, boolean national /*N'…'*/,
                      SourcePosition pos)
 record BooleanLiteral(boolean value, SourcePosition pos)   // MySQL/PG only at parse time
@@ -204,6 +215,15 @@ transform, codegen).
 round-trip smoke-test deliverable and the cross-dialect equality test (§6), and
 its output doubles as thesis exhibits.
 
+`AstTransformer` also ships with the hierarchy (D10): an `AstVisitor<Object>`
+whose every `visitX` is the identity transform — rebuild the node from its
+recursively-accepted children and return it. Phase 4 rules subclass it and
+override only the node types they match; nobody reimplements 40-method
+traversal or drifts into switch dispatch. The single type parameter forces
+internal casts when reassembling children — an accepted cost of D1, confined
+to this one base class and covered by an identity test over the whole
+corpus (§6).
+
 ## 2. Builders (`parser/` package)
 
 ### 2.1 Architecture (D4)
@@ -225,12 +245,23 @@ AstBuilderFacade.buildScript(sql, dialect) → Script
   uppercasing, all refusals. One class, unit-testable in isolation.
 - `ParserFacade` keeps returning parse trees; Phase 2 tests untouched.
 
+Placing normalization in the builders deliberately supersedes the roadmap's
+"keep builders dumb; normalize in Phase 4 rules" guideline (D11). That
+guideline's motive — testability in isolation — is preserved because
+`AstBuilderSupport` is a plain unit-testable class, and D3 requires the AST to
+be born dialect-agnostic. What moves into the builders is pure **syntax
+unification** (`TOP`/`LIMIT`, `CONVERT`→`CAST`, `SERIAL`, escapes); the Phase 4
+rule catalog keeps every **semantic** rewrite (function mapping, type-out
+rendering, concat resolution, boolean semantics) — the thesis's core chapter
+loses no exhibits.
+
 ### 2.2 Normalization table (per-dialect folds — thesis table)
 
 | Dialect | Source construct | Canonical AST result |
 |---|---|---|
 | T-SQL | `TOP n` / `TOP (expr)` | `Query.limit.count`; **refused** when the query has UNION arms |
 | T-SQL | `ORDER BY … OFFSET m ROWS [FETCH FIRST/NEXT n ROWS ONLY]` | `RowLimit(count=n, offset=m)` |
+| T-SQL | `TOP` together with `OFFSET/FETCH` | **refused** — SQL Server itself rejects the combination; merging would invent semantics |
 | T-SQL | `CONVERT(type, expr)` (2-arg) | `CastExpression` |
 | T-SQL | `N'…'` | `StringLiteral(national=true)` |
 | T-SQL | `IDENTITY(1,1)` | `autoIncrement=true`; other seed/increment **refused** |
@@ -248,6 +279,9 @@ AstBuilderFacade.buildScript(sql, dialect) → Script
 | all | dialect type name | `GenericType` via per-dialect lookup; unknown **refused** |
 | all | `qualifiedName` with >3 parts | **refused** |
 | all | function names | uppercased in `FunctionCall.name` |
+| all | exponent numerics (`1e5`, `2.5E-3`) | `NumericLiteral`, lexical text preserved (D5) |
+| all | `0x…` hex literals | **refused** — no dialect-portable v1 meaning |
+| all | quoted identifier as function name | **refused** — uppercasing would corrupt a case-sensitive name |
 | all | quoted-identifier case | preserved as written (D6) |
 
 ### 2.3 Type-folding tables (D3, excerpt — full tables in code)
@@ -267,6 +301,13 @@ AstBuilderFacade.buildScript(sql, dialect) → Script
 \* `NCHAR→NVARCHAR` is a documented v1 simplification (fixed-width national char
 folds to variable-width generic).
 
+Length/scale arguments are carried only into the parameterizable generics
+(`CHAR`, `VARCHAR`, `NVARCHAR`, `DECIMAL`, `TIME`, `TIMESTAMP`); an argument on
+any other fold (`FLOAT(24)`, `DOUBLE PRECISION(10)`) is **refused**, not
+silently dropped — Phase 5 could otherwise emit invalid SQL like `DOUBLE(24)`.
+`VARBINARY(MAX)` is the one exception: `MAX` is part of the lookup key itself
+and is consumed by the fold to `BLOB`.
+
 Anything not in the table → `UnsupportedFeatureException("type <name>", pos)`.
 
 ## 3. Grammar fixes (Phase 2 debt, D2)
@@ -279,9 +320,19 @@ sections aligned:
 2. `dataType : identifier identifier? ('(' dataTypeArg (',' dataTypeArg)? ')')? ;`
    — the **builder** whitelists `DOUBLE PRECISION` as the only legal two-word
    form; any other two-word sequence is refused with the offending text.
+3. Numeric-literal lexing. `DECIMAL_LITERAL` gains an exponent alternative —
+   `([0-9]+ ('.' [0-9]*)? | '.' [0-9]+) [eE] [+-]? [0-9]+` — because today
+   `SELECT 1e5` lexes as `1` + identifier `e5`, and the select-item alias rule
+   silently yields `SELECT 1 AS e5`: a *wrong query*, not an error, violating
+   the refuse-over-silent guarantee. A `HEX_LITERAL : '0' X [0-9A-Fa-f]+ ;`
+   token (same silent-alias trap via `0xFF`, valid in T-SQL and MySQL) joins
+   the canonical `literal` rule in all three grammars and is **refused** by
+   the builders — uniform refusal beats a confusing parse error, and hex has
+   no dialect-portable v1 meaning.
 
-The byte-identical keyword-block test continues to guard drift. Both fixes get
-corpus cases (`functions/left-right/`, `create-table-types/double-precision/`).
+The byte-identical keyword-block test continues to guard drift. All three fixes
+get corpus cases (`functions/left-right/`, `create-table-types/double-precision/`,
+`literals/exponent/`, plus the `cases/unsupported/` entries in §4).
 
 ## 4. Refusals and errors
 
@@ -295,26 +346,39 @@ class UnsupportedFeatureException extends RuntimeException {
 ```
 
 Builder-level refusals (all with positions): >3-part qualified names, unknown type
-names, illegal two-word types, `TOP` in a query with UNION arms, `IDENTITY(s,i)`
-with `(s,i) ≠ (1,1)`.
+names, illegal two-word types, length args on non-parameterizable type folds,
+`TOP` in a query with UNION arms, `TOP` combined with `OFFSET/FETCH`,
+`IDENTITY(s,i)` with `(s,i) ≠ (1,1)`, hex literals, quoted function names.
 
 New corpus category `cases/unsupported/` seeds the roadmap's Phase 7 category:
-`four-part-name`, `unknown-type`, `top-in-union`, `identity-seed`. These files
-must **fail to build** with `UnsupportedFeatureException` (they parse fine).
+`four-part-name`, `unknown-type`, `top-in-union`, `top-with-offset-fetch`,
+`identity-seed`, `hex-literal`, `quoted-function-name`. These files must
+**fail to build** with `UnsupportedFeatureException` (they parse fine).
 
 ## 5. Catalog (`analysis/` package)
 
 ```java
-record Catalog(Map<String, TableSchema> tables)          // key: lowercased table name
-record TableSchema(QualifiedName name, Map<String, ColumnInfo> columns)  // key: lowercased
-record ColumnInfo(DataType type, boolean autoIncrement)
+record Catalog(Map<String, TableSchema> tables)  // key: LAST identifier of the table's
+                                                 // qualified name, lowercased (see below)
+record TableSchema(QualifiedName name, List<ColumnInfo> columns)  // declaration order
+record ColumnInfo(Identifier name, DataType type, boolean autoIncrement)
 ```
 
+Columns are a **`List` in declaration order** — order is load-bearing: Phase 4's
+cast-insertion rule must resolve `INSERT INTO t VALUES (…)` positionally, and
+the column list is optional in all three grammars. `TableSchema` additionally
+exposes a `column(String)` helper doing lowercased-name lookup over the list.
+
+Keying rule: the map key is the **last identifier** of the table's qualified
+name, lowercased — `dbo.users` and `users` deliberately collide. This and the
+lowercased column lookup are documented simplifications consistent with the
+case-insensitivity limitation (D6).
+
 `CatalogBuilder.build(Script) → Catalog` walks statements **in order**:
-`CREATE TABLE` registers; `ALTER TABLE ADD/DROP COLUMN` mutates the entry;
-`DROP TABLE` removes it. Lowercased lookup keys are a documented simplification
-consistent with the case-insensitivity limitation (D6). Statements referencing
-unknown tables are fine — the catalog is best-effort context for Phase 4, which
+`CREATE TABLE` registers (duplicate name: last one wins); `ALTER TABLE
+ADD/DROP COLUMN` rewrites the entry; `DROP TABLE` removes it; `ALTER`/`DROP`
+of an unregistered table is silently ignored. Statements referencing unknown
+tables are fine — the catalog is best-effort context for Phase 4, which
 degrades to warnings on misses.
 
 ## 6. Testing
@@ -335,18 +399,23 @@ degrades to warnings on misses.
    unescape rule against the Phase 2 hostile inputs, the `LIMIT m,n` swap,
    `CONVERT` fold, `SERIAL` fold, `TOP` forms, `OFFSET/FETCH`, auto-increment
    variants, type folds (incl. `DOUBLE PRECISION`), numeric-literal text
-   preservation, function-name uppercasing.
+   preservation (incl. exponent forms), function-name uppercasing.
 4. **Catalog tests**: `ddl-then-dml-script` fixtures → expected catalog;
-   ALTER/DROP applied in order; case-insensitive lookup.
+   ALTER/DROP applied in order; case-insensitive lookup; **declaration order**
+   preserved (positional resolution for `INSERT` without a column list);
+   duplicate `CREATE TABLE` and `ALTER` of an unknown table.
+5. **Transformer identity** (`AstTransformerIdentityTest`): the stock
+   `AstTransformer` applied to every corpus-built `Script` yields dump-identical
+   output — guards the rebuild plumbing every Phase 4 rule will inherit.
 
 ## 7. Packaging and integration seam
 
 | Package | Contents |
 |---|---|
-| `ast/` | ~40 node records, `AstVisitor<R>`, `SourcePosition`, enums |
+| `ast/` | ~40 node records, `AstVisitor<R>`, `AstDumper`, `AstTransformer`, enums |
 | `parser/` | `AstBuilderFacade`, 3 thin builders, `AstBuilderSupport` (+ existing `ParserFacade`, `CollectingErrorListener`) |
 | `analysis/` | `Catalog`, `TableSchema`, `ColumnInfo`, `CatalogBuilder` |
-| `core/` | + `UnsupportedFeatureException` (joins `Dialect`, `ParseException`, `SyntaxError`) |
+| `core/` | + `SourcePosition`, `UnsupportedFeatureException` (join `Dialect`, `ParseException`, `SyntaxError`) |
 
 No new dependencies. Phase 4 consumes `AstBuilderFacade.buildScript(...)` and
 `CatalogBuilder.build(...)` via the future `Translator` facade.
@@ -357,13 +426,18 @@ No new dependencies. Phase 4 consumes `AstBuilderFacade.buildScript(...)` and
   rules, not nodes.
 - Explicitly not modeled (refuse-list unchanged): CTEs, window functions,
   `INSERT … SELECT`, `MERGE`, 3-arg `CONVERT`, `TOP PERCENT/WITH TIES`,
-  collation/case-sensitivity semantics, `NCHAR` as a distinct generic type.
+  collation/case-sensitivity semantics, `NCHAR` as a distinct generic type,
+  hex literals, quoted (case-sensitive) function names.
 
 ## 9. Deliverables (maps to ROADMAP Phase 3 checklist)
 
-1. Grammar fixes + new corpus cases (incl. `cases/unsupported/` seed)
-2. AST node hierarchy + `AstVisitor<R>` + `AstDumper` + `SourcePosition`
+1. Grammar fixes (×3) + new corpus cases (incl. `cases/unsupported/` seed)
+2. AST node hierarchy + `AstVisitor<R>` + `AstDumper` + `AstTransformer` +
+   `SourcePosition` (in `core/`)
 3. `AstBuilderSupport` + three thin dialect builders + `AstBuilderFacade`
 4. `UnsupportedFeatureException` in `core/`
-5. `Catalog` + `CatalogBuilder`
-6. Test layers 1–4 above, all green under `mvn clean verify` / CI
+5. `Catalog` (declaration-ordered columns) + `CatalogBuilder`
+6. `EXTENDING.md` — the "how to add a statement" recipe (a ROADMAP Phase 3
+   deliverable), written against the finished grammar/node/visitor/builder
+   pattern while it is fresh
+7. Test layers 1–5 above, all green under `mvn clean verify` / CI
