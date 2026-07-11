@@ -23,7 +23,8 @@ public final class RuleEngine {
     public static RuleEngine standard() {
         return new RuleEngine(List.of(
                 new ValidateTargetCapabilitiesRule(),
-                new NormalizeSourceFunctionsRule()));
+                new NormalizeSourceFunctionsRule(),
+                new ResolveConcatRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
