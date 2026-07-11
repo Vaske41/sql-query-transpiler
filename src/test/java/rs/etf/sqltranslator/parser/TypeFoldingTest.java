@@ -39,6 +39,29 @@ class TypeFoldingTest {
         assertThat(columnType("DATETIME", Dialect.MYSQL).type())
                 .isEqualTo(GenericType.TIMESTAMP);
         assertThat(columnType("BLOB", Dialect.MYSQL).type()).isEqualTo(GenericType.BLOB);
+        assertThat(columnType("TINYINT", Dialect.MYSQL).type()).isEqualTo(GenericType.TINYINT);
+    }
+
+    @Test
+    void mysqlTinyintOneFoldsToBoolean() {
+        DataType type = columnType("TINYINT(1)", Dialect.MYSQL);
+        assertThat(type.type()).isEqualTo(GenericType.BOOLEAN);
+        assertThat(type.length()).isEmpty();
+        assertThat(type.scale()).isEmpty();
+    }
+
+    @Test
+    void mysqlTinyintOtherLengthsAreRefused() {
+        assertThatExceptionOfType(UnsupportedFeatureException.class)
+                .isThrownBy(() -> columnType("TINYINT(2)", Dialect.MYSQL))
+                .withMessageContaining("length argument on type TINYINT");
+    }
+
+    @Test
+    void tsqlTinyintOneIsRefusedAsNonParameterizable() {
+        assertThatExceptionOfType(UnsupportedFeatureException.class)
+                .isThrownBy(() -> columnType("TINYINT(1)", Dialect.TSQL))
+                .withMessageContaining("length argument on type TINYINT");
     }
 
     @Test

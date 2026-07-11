@@ -7,6 +7,7 @@ import org.antlr.v4.runtime.tree.TerminalNode;
 import rs.etf.sqltranslator.ast.AlterAction;
 import rs.etf.sqltranslator.ast.AddColumn;
 import rs.etf.sqltranslator.ast.AlterTableStatement;
+import rs.etf.sqltranslator.ast.Assignment;
 import rs.etf.sqltranslator.ast.BetweenPredicate;
 import rs.etf.sqltranslator.ast.BinaryOp;
 import rs.etf.sqltranslator.ast.CastExpression;
@@ -29,6 +30,7 @@ import rs.etf.sqltranslator.ast.InsertStatement;
 import rs.etf.sqltranslator.ast.IsNullPredicate;
 import rs.etf.sqltranslator.ast.Join;
 import rs.etf.sqltranslator.ast.JoinKind;
+import rs.etf.sqltranslator.ast.LikePredicate;
 import rs.etf.sqltranslator.ast.NullLiteral;
 import rs.etf.sqltranslator.ast.OrderItem;
 import rs.etf.sqltranslator.ast.PrimaryKeyConstraint;
@@ -92,19 +94,19 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
     public Object visitQueryExpression(TSqlParser.QueryExpressionContext ctx) {
         List<TSqlParser.QuerySpecificationContext> specs = ctx.querySpecification();
         boolean hasArms = specs.size() > 1;
-        Expression top = null;
-        SourcePosition topPos = null;
-        for (TSqlParser.QuerySpecificationContext spec : specs) {
-            TSqlParser.TopClauseContext topClause = spec.topClause();
-            if (topClause == null) {
-                continue;
-            }
-            support.refuseIf(hasArms, "TOP inside UNION", pos(topClause));
-            top = topExpression(topClause);
-            topPos = pos(topClause);
-        }
+        List<AstBuilderSupport.ExtractedTop> tops = specs.stream()
+                .map(spec -> {
+                    TSqlParser.TopClauseContext topClause = spec.topClause();
+                    if (topClause == null) {
+                        return null;
+                    }
+                    return new AstBuilderSupport.ExtractedTop(topExpression(topClause),
+                            pos(topClause));
+                })
+                .toList();
+        AstBuilderSupport.ExtractedTop top = support.extractTsqlTop(tops, hasArms);
         QuerySpecification first = (QuerySpecification) visit(specs.get(0));
-        List<UnionArm> arms = unionArms(ctx);
+        List<UnionArm> arms = support.unionArms(ctx, TSqlParser.UNION, TSqlParser.ALL, this);
         List<OrderItem> orderBy = new ArrayList<>();
         Expression offset = null;
         Expression fetch = null;
@@ -122,7 +124,10 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
                 }
             }
         }
-        Optional<RowLimit> limit = support.tsqlRowLimit(top, topPos, offset, fetch, offsetPos);
+        Optional<RowLimit> limit = support.tsqlRowLimit(
+                top == null ? null : top.count(),
+                top == null ? null : top.position(),
+                offset, fetch, offsetPos);
         return new Query(first, arms, orderBy, limit, pos(ctx));
     }
 
@@ -130,27 +135,6 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
         return ctx.INTEGER_LITERAL() != null
                 ? support.numeric(ctx.INTEGER_LITERAL().getSymbol(), false)
                 : expr(ctx.expression());
-    }
-
-    private List<UnionArm> unionArms(TSqlParser.QueryExpressionContext ctx) {
-        List<UnionArm> arms = new ArrayList<>();
-        boolean afterUnion = false;
-        boolean all = false;
-        for (ParseTree child : ctx.children) {
-            if (child instanceof TerminalNode terminal) {
-                if (terminal.getSymbol().getType() == TSqlParser.UNION) {
-                    afterUnion = true;
-                    all = false;
-                } else if (afterUnion && terminal.getSymbol().getType() == TSqlParser.ALL) {
-                    all = true;
-                }
-            } else if (afterUnion
-                    && child instanceof TSqlParser.QuerySpecificationContext spec) {
-                arms.add(new UnionArm(all, (QuerySpecification) visit(spec), pos(spec)));
-                afterUnion = false;
-            }
-        }
-        return arms;
     }
 
     @Override
@@ -254,9 +238,8 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
 
     @Override
     public Object visitUpdateStatement(TSqlParser.UpdateStatementContext ctx) {
-        List<rs.etf.sqltranslator.ast.Assignment> assignments = ctx.assignment().stream()
-                .map(a -> new rs.etf.sqltranslator.ast.Assignment(
-                        ident(a.identifier()), expr(a.expression()), pos(a)))
+        List<Assignment> assignments = ctx.assignment().stream()
+                .map(a -> new Assignment(ident(a.identifier()), expr(a.expression()), pos(a)))
                 .toList();
         Optional<Expression> where = ctx.whereClause() == null
                 ? Optional.empty() : Optional.of(expr(ctx.whereClause().expression()));
@@ -293,25 +276,34 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
         AstBuilderSupport.ColumnAttributes attributes = new AstBuilderSupport.ColumnAttributes();
         for (TSqlParser.ColumnConstraintContext constraint : ctx.columnConstraint()) {
             if (constraint.NOT() != null) {
-                attributes.notNull();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.NOT_NULL, null, null);
             } else if (constraint.DEFAULT() != null) {
-                attributes.defaultValue(expr(constraint.expression()));
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.DEFAULT,
+                        expr(constraint.expression()), null);
             } else if (constraint.NULL() != null) {
-                attributes.nullAllowed();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.NULL_ALLOWED, null, null);
             } else if (constraint.PRIMARY() != null) {
-                attributes.primaryKey();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.PRIMARY_KEY, null, null);
             } else if (constraint.UNIQUE() != null) {
-                attributes.unique();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.UNIQUE, null, null);
             } else if (constraint.REFERENCES() != null) {
                 Optional<Identifier> column = constraint.identifier() == null
                         ? Optional.empty() : Optional.of(ident(constraint.identifier()));
-                attributes.references(new ForeignKeyRef(qname(constraint.qualifiedName()),
-                        column, pos(constraint)));
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.REFERENCES, null,
+                        new ForeignKeyRef(qname(constraint.qualifiedName()), column,
+                                pos(constraint)));
             } else if (constraint.autoIncrement() != null) {
                 TSqlParser.AutoIncrementContext auto = constraint.autoIncrement();
                 support.checkIdentitySeed(auto.INTEGER_LITERAL(0).getText(),
                         auto.INTEGER_LITERAL(1).getText(), pos(auto));
-                attributes.autoIncrement();
+                support.applyColumnConstraint(attributes,
+                        AstBuilderSupport.ColumnConstraintKind.AUTO_INCREMENT, null, null);
             }
         }
         return support.columnDefinition(ident(ctx.identifier()), type, attributes, pos(ctx));
@@ -412,7 +404,7 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
 
     @Override
     public Object visitLikePredicate(TSqlParser.LikePredicateContext ctx) {
-        return new rs.etf.sqltranslator.ast.LikePredicate(expr(ctx.concatExpression(0)),
+        return new LikePredicate(expr(ctx.concatExpression(0)),
                 expr(ctx.concatExpression(1)), ctx.NOT() != null, pos(ctx));
     }
 
@@ -460,7 +452,7 @@ final class TSqlAstBuilder extends TSqlBaseVisitor<Object> {
             return support.numeric(ctx.DECIMAL_LITERAL().getSymbol(), true);
         }
         if (ctx.HEX_LITERAL() != null) {
-            support.refuse("hex literal " + ctx.HEX_LITERAL().getText(), pos(ctx));
+            throw support.refuse("hex literal " + ctx.HEX_LITERAL().getText(), pos(ctx));
         }
         if (ctx.STRING_LITERAL() != null) {
             return support.stringLiteral(ctx.STRING_LITERAL().getSymbol());

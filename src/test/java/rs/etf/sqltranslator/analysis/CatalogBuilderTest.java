@@ -113,6 +113,14 @@ class CatalogBuilderTest {
         assertThat(t.column("x").orElseThrow().autoIncrement()).isFalse();
     }
 
+    @Test
+    void mysqlTinyintOneLandsAsBooleanInCatalog() {
+        Catalog catalog = catalog(Dialect.MYSQL,
+                "CREATE TABLE flags (active TINYINT(1) DEFAULT 1);");
+        assertThat(catalog.table("flags").orElseThrow().column("active").orElseThrow()
+                .type().type()).isEqualTo(GenericType.BOOLEAN);
+    }
+
     private static Catalog catalog(Dialect dialect, String sql) {
         return CatalogBuilder.build(AstBuilderFacade.buildScript(sql, dialect));
     }

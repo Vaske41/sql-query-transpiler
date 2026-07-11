@@ -1,8 +1,8 @@
 package rs.etf.sqltranslator.analysis;
 
+import rs.etf.sqltranslator.ast.AbstractAstVisitor;
 import rs.etf.sqltranslator.ast.AddColumn;
 import rs.etf.sqltranslator.ast.AlterTableStatement;
-import rs.etf.sqltranslator.ast.AstTransformer;
 import rs.etf.sqltranslator.ast.ColumnDefinition;
 import rs.etf.sqltranslator.ast.CreateTableStatement;
 import rs.etf.sqltranslator.ast.DropColumn;
@@ -22,10 +22,11 @@ import java.util.Map;
  * ADD/DROP COLUMN} rewrites the entry, {@code DROP TABLE} removes it, and
  * {@code ALTER}/{@code DROP} of an unregistered table is silently ignored.
  *
- * <p>Subclasses {@link AstTransformer} and overrides only the DDL nodes — exactly
- * the D10 pattern Phase 4 rules use; traversal stays visitor-dispatched (D1).
+ * <p>Subclasses {@link AbstractAstVisitor} (walk/scan) and overrides only the DDL
+ * nodes — analysis observation, not an AST→AST rewrite. Phase 4 rules subclass
+ * {@code AstTransformer} for pure transforms.
  */
-public final class CatalogBuilder extends AstTransformer {
+public final class CatalogBuilder extends AbstractAstVisitor<Void> {
 
     private final Map<String, TableSchema> tables = new LinkedHashMap<>();
 
@@ -42,46 +43,46 @@ public final class CatalogBuilder extends AstTransformer {
     }
 
     @Override
-    public Object visitCreateTableStatement(CreateTableStatement node) {
+    public Void visitCreateTableStatement(CreateTableStatement node) {
         List<ColumnInfo> columns = node.columns().stream()
                 .map(CatalogBuilder::columnInfo)
                 .toList();
         tables.put(key(node.table()), new TableSchema(node.table(), columns));
-        return node;
+        return null;
     }
 
     @Override
-    public Object visitDropTableStatement(DropTableStatement node) {
+    public Void visitDropTableStatement(DropTableStatement node) {
         tables.remove(key(node.table()));
-        return node;
+        return null;
     }
 
     @Override
-    public Object visitAlterTableStatement(AlterTableStatement node) {
+    public Void visitAlterTableStatement(AlterTableStatement node) {
         alterTarget = tables.get(key(node.table()));
         if (alterTarget != null) {
             node.action().accept(this);
         }
         alterTarget = null;
-        return node;
+        return null;
     }
 
     @Override
-    public Object visitAddColumn(AddColumn node) {
+    public Void visitAddColumn(AddColumn node) {
         List<ColumnInfo> columns = new ArrayList<>(alterTarget.columns());
         columns.add(columnInfo(node.column()));
         tables.put(key(alterTarget.name()), new TableSchema(alterTarget.name(), columns));
-        return node;
+        return null;
     }
 
     @Override
-    public Object visitDropColumn(DropColumn node) {
+    public Void visitDropColumn(DropColumn node) {
         String dropped = node.column().value().toLowerCase(Locale.ROOT);
         List<ColumnInfo> columns = alterTarget.columns().stream()
                 .filter(c -> !c.name().value().toLowerCase(Locale.ROOT).equals(dropped))
                 .toList();
         tables.put(key(alterTarget.name()), new TableSchema(alterTarget.name(), columns));
-        return node;
+        return null;
     }
 
     private static ColumnInfo columnInfo(ColumnDefinition column) {

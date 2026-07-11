@@ -271,6 +271,7 @@ loses no exhibits.
 | MySQL | `a \|\| b` | `BinaryOp(OR)` (default `sql_mode`: logical OR) |
 | MySQL | `'…'`/`"…"` strings (backslash + doubling escapes), `` `x` `` (` `` ` escape) | unescaped `StringLiteral` / `Identifier(quoted=true)` |
 | MySQL | `AUTO_INCREMENT` | `autoIncrement=true` |
+| MySQL | `TINYINT(1)` | `GenericType.BOOLEAN` — ubiquitous boolean idiom; bare `TINYINT` stays `TINYINT`; other lengths refused |
 | PG | `SERIAL` / `BIGSERIAL` / `SMALLSERIAL` | `INTEGER`/`BIGINT`/`SMALLINT` + `autoIncrement=true` |
 | PG | `GENERATED ALWAYS\|BY DEFAULT AS IDENTITY` | `autoIncrement=true` |
 | PG | `a \|\| b` | `BinaryOp(CONCAT)` |
@@ -305,8 +306,10 @@ Length/scale arguments are carried only into the parameterizable generics
 (`CHAR`, `VARCHAR`, `NVARCHAR`, `DECIMAL`, `TIME`, `TIMESTAMP`); an argument on
 any other fold (`FLOAT(24)`, `DOUBLE PRECISION(10)`) is **refused**, not
 silently dropped — Phase 5 could otherwise emit invalid SQL like `DOUBLE(24)`.
-`VARBINARY(MAX)` is the one exception: `MAX` is part of the lookup key itself
-and is consumed by the fold to `BLOB`.
+Two documented exceptions: `VARBINARY(MAX)` (T-SQL) — `MAX` is part of the
+lookup key itself and is consumed by the fold to `BLOB`; MySQL `TINYINT(1)` —
+folds to `BOOLEAN` (boolean idiom for Phase 4), while bare `TINYINT` and
+`TINYINT(n)` for `n ≠ 1` follow the normal rules (keep / refuse).
 
 Anything not in the table → `UnsupportedFeatureException("type <name>", pos)`.
 
