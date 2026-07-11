@@ -28,7 +28,8 @@ public final class RuleEngine {
                 new InsertCastsRule(),
                 new RewriteBooleanSemanticsRule(),
                 new NarrowTypesRule(),
-                new RenderTargetFunctionsRule()));
+                new RenderTargetFunctionsRule(),
+                new DropNullsOrderingRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
