@@ -1,0 +1,1 @@
+CREATE TABLE t (id INT IDENTITY(1,1));

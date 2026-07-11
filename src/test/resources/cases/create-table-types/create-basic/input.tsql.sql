@@ -1,0 +1,7 @@
+CREATE TABLE users (
+    id INT NOT NULL,
+    name NVARCHAR(100) NOT NULL,
+    bio NVARCHAR(MAX),
+    balance DECIMAL(10,2) DEFAULT 0,
+    created_at DATETIME2 DEFAULT GETDATE()
+);
