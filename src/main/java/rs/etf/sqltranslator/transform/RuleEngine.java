@@ -24,7 +24,8 @@ public final class RuleEngine {
         return new RuleEngine(List.of(
                 new ValidateTargetCapabilitiesRule(),
                 new NormalizeSourceFunctionsRule(),
-                new ResolveConcatRule()));
+                new ResolveConcatRule(),
+                new InsertCastsRule()));
     }
 
     public TranslationResult run(Script script, Dialect source, Dialect target) {
