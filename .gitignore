@@ -1,6 +1,7 @@
-# Private planning notes
+# Private planning notes (docs/superpowers/ specs are tracked)
 plans/
-docs/
+docs/*
+!docs/superpowers/
 
 # Maven
 target/

@@ -1,0 +1,1 @@
+SELECT COUNT(*), COUNT(DISTINCT status) FROM orders;
