@@ -124,3 +124,20 @@ style, keyword spelling). Parenthesize-everything is the accepted v1 style.
 
 The queue is the first thing sacrificed when behind schedule: v1 scope never
 grows before the day-14 milestones are green.
+
+## Adding a transformation rule (Phase 4)
+
+1. Create `transform/<Name>Rule.java` implementing `Rule`; put the rewrite in a
+   private static transformer extending `AstTransformer` (or `ScopedTransformer`
+   when you need `resolve(ColumnRef)` / `familyOf(Expression)`).
+2. Override only the `visitX` methods you match; always call `super.visitX(node)`
+   first so children are rebuilt, then pattern-match on the rebuilt node.
+3. Emit warnings via `ctx.report().warn(CODE, message, node.pos())` — stable
+   UPPER_SNAKE code, human message, position. Refuse with
+   `UnsupportedFeatureException` instead of translating wrong.
+4. Register the rule at its position in `RuleEngine.standard()` — order is
+   load-bearing; read the sequence table in
+   `docs/superpowers/plans/2026-07-11-phase-4-transformation.md`.
+5. Test with `TransformTestSupport.runRule(rule, sql, source, target)`: SQL
+   snippets in, node assertions out. Add corpus cases when the rule has a
+   parseable surface form.

@@ -15,7 +15,7 @@ import java.util.stream.Stream;
  * missing or empty, so a resources-path typo can never fake a green build via an
  * empty {@code @TestFactory} stream.
  */
-final class CaseFiles {
+public final class CaseFiles {
 
     private final Path root;
     private final List<Path> files;
@@ -25,7 +25,7 @@ final class CaseFiles {
         this.files = files;
     }
 
-    static CaseFiles under(String classpathRoot, Predicate<Path> fileFilter) {
+    public static CaseFiles under(String classpathRoot, Predicate<Path> fileFilter) {
         URL rootUrl = CaseFiles.class.getResource(classpathRoot);
         if (rootUrl == null) {
             throw new IllegalStateException("Classpath root not found: " + classpathRoot);
@@ -48,11 +48,11 @@ final class CaseFiles {
         return new CaseFiles(root, files);
     }
 
-    List<Path> files() {
+    public List<Path> files() {
         return files;
     }
 
-    String displayName(Path file) {
+    public String displayName(Path file) {
         return root.relativize(file).toString().replace('\\', '/');
     }
 }
