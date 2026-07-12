@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import rs.etf.sqltranslator.core.Dialect;
 import rs.etf.sqltranslator.core.UnsupportedFeatureException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static rs.etf.sqltranslator.transform.TransformTestSupport.runRule;
@@ -53,5 +54,23 @@ class ValidateTargetCapabilitiesRuleTest {
                 Dialect.POSTGRESQL, Dialect.MYSQL))
                 .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("OFFSET without LIMIT");
+    }
+
+    @Test
+    void mysqlLooseGroupByWarnsForPostgresTarget() {
+        TranslationResult r = runRule(rule,
+                "SELECT dept, name FROM emp GROUP BY dept;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        assertThat(r.report().warnings())
+                .anyMatch(w -> w.code().equals("LOOSE_GROUP_BY")
+                        && w.message().contains("name"));
+    }
+
+    @Test
+    void mysqlStrictGroupByDoesNotWarn() {
+        TranslationResult r = runRule(rule,
+                "SELECT dept, COUNT(*) FROM emp GROUP BY dept;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        assertThat(r.report().warnings()).noneMatch(w -> w.code().equals("LOOSE_GROUP_BY"));
     }
 }

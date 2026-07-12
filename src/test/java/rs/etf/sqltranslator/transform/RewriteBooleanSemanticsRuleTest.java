@@ -146,4 +146,36 @@ class RewriteBooleanSemanticsRuleTest {
         assertThat(where).isInstanceOf(ColumnRef.class);
         assertThat(where).isNotInstanceOf(CastExpression.class);
     }
+
+    @Test
+    void mysqlTinyintOneFoldsToBooleanAndSimplifiesForPostgres() {
+        TranslationResult r = runRule(rule,
+                "CREATE TABLE flags (active TINYINT(1));"
+                        + "SELECT active FROM flags WHERE active = 1;",
+                Dialect.MYSQL, Dialect.POSTGRESQL);
+        assertThat(whereOf(r.script(), 1)).isInstanceOf(ColumnRef.class);
+    }
+
+    @Test
+    void joinOnAndHavingGetTruthinessWrappingForTsql() {
+        TranslationResult r = runRule(rule,
+                DDL + "SELECT f.qty FROM flags f JOIN flags g ON f.active "
+                        + "GROUP BY f.qty HAVING f.active;",
+                Dialect.POSTGRESQL, Dialect.TSQL);
+        SelectStatement select = (SelectStatement) r.script().statements().get(1);
+        BinaryOp on = (BinaryOp) select.query().first().from().orElseThrow()
+                .joins().get(0).on().orElseThrow();
+        assertThat(on.op()).isEqualTo(BinaryOperator.NEQ);
+        BinaryOp having = (BinaryOp) select.query().first().having().orElseThrow();
+        assertThat(having.op()).isEqualTo(BinaryOperator.NEQ);
+    }
+
+    @Test
+    void whereTrueDoesNotBecomeOneNeqZeroForTsql() {
+        TranslationResult r = runRule(rule, "SELECT 1 WHERE TRUE;",
+                Dialect.POSTGRESQL, Dialect.TSQL);
+        Expression where = whereOf(r.script(), 0);
+        assertThat(where).isInstanceOf(NumericLiteral.class);
+        assertThat(((NumericLiteral) where).text()).isEqualTo("1");
+    }
 }

@@ -86,4 +86,41 @@ class ScopedTransformerTest {
         assertThat(TypeFamily.of(GenericType.DECIMAL)).isEqualTo(TypeFamily.NUMERIC);
         assertThat(TypeFamily.of(GenericType.TIMESTAMP)).isEqualTo(TypeFamily.DATETIME);
     }
+
+    @Test
+    void correlatedOuterColumnInSubqueryStaysUnresolved() {
+        // v1: top frame only — outer products columns are not visible inside the subquery.
+        Probe p = probe(DDL
+                        + "SELECT p.id FROM products p WHERE p.price = "
+                        + "(SELECT o.product_id FROM orders o WHERE o.product_id = p.id);",
+                Dialect.MYSQL);
+        assertThat(p.resolved).contains("id->UNRESOLVED");
+    }
+
+    @Test
+    void familyOfDoesNotInferThroughCoalesce() {
+        Script script = AstBuilderFacade.buildScript(
+                DDL + "SELECT COALESCE(name, 'x') FROM products;", Dialect.MYSQL);
+        TranslationContext ctx = new TranslationContext(Dialect.MYSQL, Dialect.POSTGRESQL,
+                CatalogBuilder.build(script), new TranslationReport());
+        class FamilyProbe extends ScopedTransformer {
+            Optional<TypeFamily> family = Optional.empty();
+
+            FamilyProbe(TranslationContext c) {
+                super(c);
+            }
+
+            @Override
+            protected Object afterQuerySpecification(
+                    rs.etf.sqltranslator.ast.QuerySpecification rebuilt) {
+                rs.etf.sqltranslator.ast.SelectExpr item =
+                        (rs.etf.sqltranslator.ast.SelectExpr) rebuilt.items().get(0);
+                family = familyOf(item.expr());
+                return rebuilt;
+            }
+        }
+        FamilyProbe fp = new FamilyProbe(ctx);
+        fp.transform(script);
+        assertThat(fp.family).isEmpty();
+    }
 }

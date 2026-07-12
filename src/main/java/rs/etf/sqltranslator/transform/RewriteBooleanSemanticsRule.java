@@ -113,6 +113,10 @@ public final class RewriteBooleanSemanticsRule implements Rule {
             if (expr instanceof BooleanLiteral) {
                 return expr;                          // PG/MySQL targets: bare is legal
             }                                         // (T-SQL: already a NumericLiteral)
+            // T-SQL TRUE/FALSE already lowered to 1/0 — do not wrap as "1 <> 0".
+            if (expr instanceof NumericLiteral) {
+                return expr;
+            }
             Optional<TypeFamily> family = familyOf(expr);
             boolean resolvedBoolean = family.filter(f -> f == TypeFamily.BOOLEAN).isPresent();
             if (ctx.target() == Dialect.POSTGRESQL && resolvedBoolean) {

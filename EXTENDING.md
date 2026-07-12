@@ -136,8 +136,47 @@ grows before the day-14 milestones are green.
    UPPER_SNAKE code, human message, position. Refuse with
    `UnsupportedFeatureException` instead of translating wrong.
 4. Register the rule at its position in `RuleEngine.standard()` — order is
-   load-bearing; read the sequence table in
-   `docs/superpowers/plans/2026-07-11-phase-4-transformation.md`.
+   load-bearing (pipeline stages). See the warning/refusal catalog below.
 5. Test with `TransformTestSupport.runRule(rule, sql, source, target)`: SQL
    snippets in, node assertions out. Add corpus cases when the rule has a
-   parseable surface form.
+   parseable surface form. Flagship rewrites also belong in
+   `RuleEngineRewriteEvidenceTest`.
+
+### Phase 4 vs Phase 5 ownership
+
+- **Phase 4** owns *structural* rewrites: canonical function forms, CONCAT op
+  vs `CONCAT()`, type *narrowing* (`NVARCHAR`→`VARCHAR`/`TEXT`, `TINYINT`→`SMALLINT`
+  for PG), boolean truthiness, cast insertion, NULLS inject/drop.
+- **Phase 5** owns *lexical* spelling: `BOOLEAN`→`BIT`, `DOUBLE`→`FLOAT`,
+  `BLOB`→`VARBINARY(MAX)`, keyword casing, quoting. Do not expect Phase 4 to
+  finish the ROADMAP "GenericType × 3 targets" name table.
+
+### Same-dialect policy
+
+`source == target` does **not** guarantee dump identity after `RuleEngine.standard()`:
+normalize→render can rename functions (e.g. `LENGTH`↔`CHAR_LENGTH`). Determinism
+still holds (two runs dump-equal). Prefer rewrite-evidence tests over identity
+claims for same-dialect paths.
+
+### Warning & refusal catalog (Phase 4)
+
+| Code / exception | When | Behavior |
+|---|---|---|
+| `UnsupportedFeatureException` FULL JOIN→MySQL | Target cannot express | Refuse |
+| `UnsupportedFeatureException` OFFSET w/o ORDER BY→T-SQL | Target cannot express | Refuse |
+| `UnsupportedFeatureException` OFFSET w/o LIMIT→MySQL | Target cannot express | Refuse |
+| `LOOSE_GROUP_BY` | MySQL source, bare select column absent from `GROUP BY`, target PG/T-SQL | Warn |
+| `MYSQL_CHAR_LENGTH_ASSUMED` | MySQL `LENGTH` folded to `CHAR_LENGTH` | Warn |
+| `AMBIGUOUS_PLUS` | T-SQL `+` with unresolved operand types | Keep ADD, warn |
+| `CAST_INSERTED` | PG target, literal cast inserted vs catalog column | Rewrite + warn |
+| `IMPLICIT_CONVERSION` | T-SQL target, type mismatch detected | Warn only |
+| `CAST_UNRESOLVED` | Literal-vs-column shape, column not in catalog | No rewrite, warn |
+| `BOOLEAN_CONTEXT_UNRESOLVED` | PG bare predicate, unknown type | Assume `<> 0`, warn |
+| `TINYINT_WIDENED` | PG target, `TINYINT`→`SMALLINT` | Rewrite + warn |
+| `TINYINT_SIGNEDNESS` | MySQL↔T-SQL `TINYINT` | Warn |
+| `FUNCTION_PASSTHROUGH` | Unknown function name | Pass through + warn |
+| `CONCAT_OPERAND_UNRESOLVED` | T-SQL CONCAT operand type unknown | Warn |
+| `NULLS_ORDERING_DROPPED` | PG `NULLS FIRST/LAST` → MySQL/T-SQL | Drop + warn |
+
+`PreserveNullsOrderingRule` injects `NULLS FIRST`/`LAST` for MySQL/T-SQL→PG without
+a warning (semantics preserved, not lost).

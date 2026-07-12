@@ -56,12 +56,13 @@ class InsertCastsRuleTest {
     }
 
     @Test
-    void unresolvedColumnIsLeftAloneWithoutWarning() {
+    void unresolvedColumnWarnsWithoutRewriting() {
         TranslationResult r = runRule(rule, "SELECT a FROM unknown_table WHERE a = 5;",
                 Dialect.MYSQL, Dialect.POSTGRESQL);
         BinaryOp where = (BinaryOp) whereOf(r.script(), 0);
         assertThat(where.right()).isNotInstanceOf(CastExpression.class);
-        assertThat(r.report().warnings()).isEmpty();
+        assertThat(r.report().warnings())
+                .anyMatch(w -> w.code().equals("CAST_UNRESOLVED"));
     }
 
     @Test

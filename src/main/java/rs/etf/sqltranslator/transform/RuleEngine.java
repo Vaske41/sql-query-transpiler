@@ -7,9 +7,10 @@ import rs.etf.sqltranslator.core.Dialect;
 import java.util.List;
 
 /**
- * Applies rules once, in fixed list order — no fixed-point iteration (single-pass
- * keeps translation deterministic; ROADMAP Phase 4). Batches are positions in the
- * list: [Validate] → [Normalize] → [TargetRewrite].
+ * Applies rules once, in fixed list order — a deterministic linear rewrite
+ * pipeline inspired by Catalyst's <em>rule</em> idea, not Catalyst's
+ * analyzer/optimizer scheduling or fixed-point iteration. Order is load-bearing
+ * (pipeline stages, not independent batches).
  */
 public final class RuleEngine {
 
@@ -19,7 +20,7 @@ public final class RuleEngine {
         this.rules = List.copyOf(rules);
     }
 
-    /** The standard sequence. Grows task by task; order is load-bearing. */
+    /** The standard sequence. Order is load-bearing. */
     public static RuleEngine standard() {
         return new RuleEngine(List.of(
                 new ValidateTargetCapabilitiesRule(),
@@ -29,6 +30,7 @@ public final class RuleEngine {
                 new RewriteBooleanSemanticsRule(),
                 new NarrowTypesRule(),
                 new RenderTargetFunctionsRule(),
+                new PreserveNullsOrderingRule(),
                 new DropNullsOrderingRule()));
     }
 

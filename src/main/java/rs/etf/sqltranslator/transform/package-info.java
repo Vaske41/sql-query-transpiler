@@ -1,2 +1,2 @@
-/** Catalyst-style rule engine: fixed-order AST→AST rewrite rules (Phase 4). */
+/** Deterministic linear AST→AST rewrite pipeline (Phase 4). Catalyst-inspired rules, not Catalyst scheduling. */
 package rs.etf.sqltranslator.transform;

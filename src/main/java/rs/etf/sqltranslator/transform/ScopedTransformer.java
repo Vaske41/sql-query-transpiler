@@ -27,14 +27,16 @@ import java.util.Optional;
 /**
  * Rule base for catalog-aware transforms. Tracks a stack of FROM-clause scopes
  * (alias or table name → TableSchema) so {@link #resolve(ColumnRef)} can answer
- * "what column is this?" — the Catalyst-analyzer move that makes type-dependent
- * rewrites decidable. Unresolvable references return empty; callers degrade to
- * warnings, never guesses.
+ * "what column is this?" for type-dependent rewrites. Unresolvable references
+ * return empty; callers degrade to warnings, never guesses.
+ *
+ * <p><b>v1 scope contract:</b> resolution uses the <em>top frame only</em> — no
+ * outer-scope correlation through expression-position subqueries. Correlated
+ * references to enclosing FROM columns systematically return empty.
  *
  * <p>Subclasses override the {@code afterX} hooks (called with scope still pushed)
  * instead of the corresponding {@code visitX} methods, which are final here.
- */
-public abstract class ScopedTransformer extends rs.etf.sqltranslator.ast.AstTransformer {
+ */public abstract class ScopedTransformer extends rs.etf.sqltranslator.ast.AstTransformer {
 
     /** One table visible in the current scope, under its alias or its own name. */
     private record ScopedTable(String key, TableSchema schema) {
@@ -126,7 +128,12 @@ public abstract class ScopedTransformer extends rs.etf.sqltranslator.ast.AstTran
         return Optional.empty();
     }
 
-    /** Best-effort type family: literals, catalog-resolved columns, CAST targets. */
+    /**
+     * Best-effort type family: literals, catalog-resolved columns, CAST targets,
+     * and a few operator-result heuristics. Unsupported shapes ({@code FunctionCall},
+     * {@code CaseExpression}, {@code COALESCE}, scalar subqueries, …) return empty —
+     * callers must degrade (warn / no-op), never invent a type.
+     */
     protected final Optional<TypeFamily> familyOf(Expression expr) {
         if (expr instanceof NumericLiteral) {
             return Optional.of(TypeFamily.NUMERIC);

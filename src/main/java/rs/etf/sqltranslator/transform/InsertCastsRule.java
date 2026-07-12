@@ -20,10 +20,10 @@ import java.util.Optional;
 /**
  * The flagship catalog rewrite (ROADMAP Phase 4): where the source dialect converts
  * implicitly but PostgreSQL would error, wrap the literal side of a comparison in an
- * explicit CAST to the catalog-resolved column's type. Decidable cases only —
- * unresolved columns are left untouched (documented boundary); T-SQL targets get a
- * warning instead of a rewrite (T-SQL converts implicitly, but by different
- * precedence rules worth surfacing).
+ * explicit CAST to the catalog-resolved column's type. Decidable cases only.
+ * Literal-vs-{@code ColumnRef} shapes whose column does not resolve emit
+ * {@code CAST_UNRESOLVED} and are left untouched — detectable incompleteness, not a
+ * silent skip. T-SQL targets warn ({@code IMPLICIT_CONVERSION}) instead of rewriting.
  */
 public final class InsertCastsRule implements Rule {
 
@@ -60,15 +60,23 @@ public final class InsertCastsRule implements Rule {
             if (!COMPARISONS.contains(op.op())) {
                 return op;
             }
-            Optional<ColumnInfo> leftColumn = columnOf(op.left());
-            Optional<ColumnInfo> rightColumn = columnOf(op.right());
-            if (leftColumn.isPresent() && isCastableLiteral(op.right())) {
-                return new BinaryOp(op.op(), op.left(),
-                        harmonize(op.right(), leftColumn.get()), op.pos());
+            if (op.left() instanceof ColumnRef leftRef && isCastableLiteral(op.right())) {
+                return resolve(leftRef)
+                        .map(column -> (Object) new BinaryOp(op.op(), op.left(),
+                                harmonize(op.right(), column), op.pos()))
+                        .orElseGet(() -> {
+                            warnUnresolved(leftRef, op.pos());
+                            return op;
+                        });
             }
-            if (rightColumn.isPresent() && isCastableLiteral(op.left())) {
-                return new BinaryOp(op.op(),
-                        harmonize(op.left(), rightColumn.get()), op.right(), op.pos());
+            if (op.right() instanceof ColumnRef rightRef && isCastableLiteral(op.left())) {
+                return resolve(rightRef)
+                        .map(column -> (Object) new BinaryOp(op.op(),
+                                harmonize(op.left(), column), op.right(), op.pos()))
+                        .orElseGet(() -> {
+                            warnUnresolved(rightRef, op.pos());
+                            return op;
+                        });
             }
             return op;
         }
@@ -76,27 +84,46 @@ public final class InsertCastsRule implements Rule {
         @Override
         public Object visitBetweenPredicate(BetweenPredicate node) {
             BetweenPredicate between = (BetweenPredicate) super.visitBetweenPredicate(node);
-            return columnOf(between.value())
+            if (!(between.value() instanceof ColumnRef ref)) {
+                return between;
+            }
+            return resolve(ref)
                     .map(column -> (Object) new BetweenPredicate(between.value(),
                             harmonize(between.low(), column),
                             harmonize(between.high(), column),
                             between.negated(), between.pos()))
-                    .orElse(between);
+                    .orElseGet(() -> {
+                        if (isCastableLiteral(between.low()) || isCastableLiteral(between.high())) {
+                            warnUnresolved(ref, between.pos());
+                        }
+                        return between;
+                    });
         }
 
         @Override
         public Object visitInListPredicate(InListPredicate node) {
             InListPredicate in = (InListPredicate) super.visitInListPredicate(node);
-            return columnOf(in.value())
+            if (!(in.value() instanceof ColumnRef ref)) {
+                return in;
+            }
+            return resolve(ref)
                     .map(column -> (Object) new InListPredicate(in.value(),
                             in.items().stream().map(item -> harmonize(item, column)).toList(),
                             in.negated(), in.pos()))
-                    .orElse(in);
+                    .orElseGet(() -> {
+                        if (in.items().stream().anyMatch(InsertCastsRule.Caster::isCastableLiteral)) {
+                            warnUnresolved(ref, in.pos());
+                        }
+                        return in;
+                    });
         }
 
-        /** The expression's catalog column, if it is a resolved ColumnRef. */
-        private Optional<ColumnInfo> columnOf(Expression expr) {
-            return expr instanceof ColumnRef ref ? resolve(ref) : Optional.empty();
+        private void warnUnresolved(ColumnRef ref, SourcePosition pos) {
+            ctx.report().warn("CAST_UNRESOLVED",
+                    "column '" + ref.name().last().value()
+                            + "' did not resolve in the script catalog; "
+                            + "no cast inserted",
+                    pos);
         }
 
         private static boolean isCastableLiteral(Expression expr) {
